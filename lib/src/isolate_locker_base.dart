@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:isolate';
 import 'package:mutex/mutex.dart';
 
@@ -139,12 +140,13 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
 
 class IsolateLocker {
   SendPort _lockerSendPort;
+  var _lockerSenderPortCompleter = Completer();
 
   /**
    * newLockerReady = Callback if a new Locker for a worker Isolate is ready
    * newIsolateReady = The Isolated Locker is ready and new Locker can now be generates
    */
-  IsolateLocker(Function(Locker) newLockerReady, Function() isolatorReady) {
+  IsolateLocker(Function(Locker) newLockerReady) {
     var lockReceivePort = ReceivePort();
 
     void _isolateListener() async {
@@ -154,7 +156,7 @@ class IsolateLocker {
             // Use first sendPort for the communication with main
             _lockerSendPort = message;
             print("Locker set up");
-            isolatorReady();
+            _lockerSenderPortCompleter.complete();
           } else {
             Locker newLocker = Locker();
             newLocker.lockerIsolatePort = message;
@@ -168,8 +170,8 @@ class IsolateLocker {
     Isolate.spawn(_lockerIsolateFunc, lockReceivePort.sendPort);
   }
 
-  bool requestNewLocker({int amount = 1}) {
-    if (_lockerSendPort == null) return false;
+  Future requestNewLocker({int amount = 1}) async {
+    await _lockerSenderPortCompleter.future;
 
     _lockerSendPort.send(_SendPortRequest(amount));
     return true;

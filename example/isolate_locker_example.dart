@@ -2,7 +2,7 @@ import 'package:isolate_locker/isolate_locker.dart';
 import 'dart:isolate';
 
 IsolateLocker isolateLocker;
-const int workerAmount = 1;
+const int workerAmount = 2;
 const int waitTime = 3000;
 int workerCount = 0;
 
@@ -17,10 +17,7 @@ class WorkerConfig {
 }
 
 void main() async {
-  isolateLocker = IsolateLocker(newLockerReady, isolateReady);
-}
-
-void isolateReady() {
+  isolateLocker = IsolateLocker(newLockerReady);
   isolateLocker.requestNewLocker(amount: workerAmount);
 }
 
