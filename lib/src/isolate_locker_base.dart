@@ -19,9 +19,19 @@ class Locker {
     await _lockWithState(true);
   }
 
-  Future<void> release() async {
+  void release() async {
     await _lockWithState(false);
     m.release();
+  }
+
+  Future<void> protect(Function criticalSection) async {
+    await request();
+
+    try {
+      await criticalSection();
+    } finally {
+      release();
+    }
   }
 
   Future<void> _lockWithState(bool newLockState) async {
