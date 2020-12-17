@@ -2,9 +2,8 @@ import 'package:isolate_locker/isolate_locker.dart';
 import 'dart:isolate';
 
 IsolateLocker isolateLocker;
-const int workerAmount = 2;
-const int waitTime = 3000;
-int workerCount = 0;
+const int workerAmount = 100;
+const int waitTime = 0;
 
 class WorkerConfig {
   WorkerConfig(Locker locker, int id) {
@@ -17,13 +16,13 @@ class WorkerConfig {
 }
 
 void main() async {
-  isolateLocker = IsolateLocker(newLockerReady);
-  isolateLocker.requestNewLocker(amount: workerAmount);
-}
+  isolateLocker = IsolateLocker();
 
-void newLockerReady(Locker newLocker) {
-  print("C Creating Worker " + workerCount.toString());
-  Isolate.spawn(workerIsolateFunc, WorkerConfig(newLocker, workerCount++));
+  for (var i = 0; i < workerAmount; i++) {
+    Locker newLocker = await isolateLocker.requestNewLocker();
+    print("C Creating Worker " + i.toString());
+    Isolate.spawn(workerIsolateFunc, WorkerConfig(newLocker, i));
+  }
 }
 
 void workerIsolateFunc(WorkerConfig conf) async {
@@ -39,8 +38,10 @@ void workerRoutine(int count, WorkerConfig conf) async {
       conf.id.toString() +
       " successfully requested");
 
-  await Future.delayed(
-      Duration(milliseconds: waitTime)); // Simulate some heeeavy task
+  if (waitTime > 0) {
+    await Future.delayed(
+        Duration(milliseconds: waitTime)); // Simulate some heeeavy task
+  }
 
   print(count.toString() + " W " + conf.id.toString() + " releasing now");
   await conf.locker.release();

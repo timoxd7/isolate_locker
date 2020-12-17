@@ -141,12 +141,13 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
 class IsolateLocker {
   SendPort _lockerSendPort;
   var _lockerSenderPortCompleter = Completer();
+  var _newLockerCompleter = Completer();
+  Mutex m = Mutex();
 
   /**
    * newLockerReady = Callback if a new Locker for a worker Isolate is ready
-   * newIsolateReady = The Isolated Locker is ready and new Locker can now be generates
    */
-  IsolateLocker(Function(Locker) newLockerReady) {
+  IsolateLocker() {
     var lockReceivePort = ReceivePort();
 
     void _isolateListener() async {
@@ -160,7 +161,7 @@ class IsolateLocker {
           } else {
             Locker newLocker = Locker();
             newLocker.lockerIsolatePort = message;
-            newLockerReady(newLocker);
+            _newLockerCompleter.complete(newLocker);
           }
         }
       }
@@ -170,10 +171,17 @@ class IsolateLocker {
     Isolate.spawn(_lockerIsolateFunc, lockReceivePort.sendPort);
   }
 
-  Future requestNewLocker({int amount = 1}) async {
+  Future<Locker> requestNewLocker() async {
+    m.acquire();
+
     await _lockerSenderPortCompleter.future;
 
-    _lockerSendPort.send(_SendPortRequest(amount));
-    return true;
+    _newLockerCompleter = Completer();
+    _lockerSendPort.send(_SendPortRequest(1));
+    Locker newLocker = await _newLockerCompleter.future;
+
+    m.release();
+
+    return newLocker;
   }
 }
