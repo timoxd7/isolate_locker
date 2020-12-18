@@ -9,6 +9,7 @@ class _LockerQueueEntry {
 
 class Locker {
   SendPort _lockerIsolatePort;
+  bool _dead = false;
 
   /// Besides the lock between the independent isolates, there also needs to be
   /// a Lock between async code in the same Isolate. To lock them against each
@@ -19,12 +20,16 @@ class Locker {
   /// exclusively use it. Use just with "await" to wait for the lock to be
   /// accepted
   Future<void> request() async {
+    if (_dead) return;
+
     await _m.acquire();
     await _lockWithState(true);
   }
 
   /// Release a once given lock. request() has to be called first!
   void release() async {
+    if (_dead) return;
+
     await _lockWithState(false);
     _m.release();
   }
@@ -45,10 +50,19 @@ class Locker {
   /// Only if the Isolate should be terminated! This will render this Locker
   /// permanently useless. Only use if all sync and async code which could
   /// use this Locker is fully completed!
-  void kill() {
+  void kill() async {
+    await _m.acquire();
+
     _SendPortRequest message = _SendPortRequest();
     message.action = false;
     _lockerIsolatePort.send(message);
+    _dead = true;
+
+    _m.release();
+  }
+
+  bool isDead() {
+    return _dead;
   }
 
   Future<void> _lockWithState(bool newLockState) async {
