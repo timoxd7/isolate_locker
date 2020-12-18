@@ -32,3 +32,15 @@ as it is released automatically!
     await locker.protect(() {
       // Your code...
     });
+
+## Program Termination
+
+If you want to terminate the Program, all isolates having a Locker need to kill this locker with
+
+    locker.kill();
+
+And in the main isolate, where the IsolateLocker were created, it also needs to be killed
+
+    isolateLocker.kill();
+
+Only if all Isolates killed its Locker, the IsolateLocker will kill itself and its attached Isolate.

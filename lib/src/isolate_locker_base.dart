@@ -8,25 +8,25 @@ class _LockerQueueEntry {
 }
 
 class Locker {
-  SendPort lockerIsolatePort;
+  SendPort _lockerIsolatePort;
 
   /// Besides the lock between the independent isolates, there also needs to be
   /// a Lock between async code in the same Isolate. To lock them against each
   /// other, using a Mutex from the mutex package is the best way.
-  Mutex m = Mutex();
+  Mutex _m = Mutex();
 
   /// Awaiting this Future, you can Lock the specific IsolateLocker to
   /// exclusively use it. Use just with "await" to wait for the lock to be
   /// accepted
   Future<void> request() async {
-    await m.acquire();
+    await _m.acquire();
     await _lockWithState(true);
   }
 
   /// Release a once given lock. request() has to be called first!
   void release() async {
     await _lockWithState(false);
-    m.release();
+    _m.release();
   }
 
   /// To prevent misusage by forgetting release, you can just encapsulate a
@@ -48,7 +48,7 @@ class Locker {
   void kill() {
     _SendPortRequest message = _SendPortRequest();
     message.action = false;
-    lockerIsolatePort.send(message);
+    _lockerIsolatePort.send(message);
   }
 
   Future<void> _lockWithState(bool newLockState) async {
@@ -72,7 +72,7 @@ class Locker {
     }
 
     var lockResponseFuture = lockListener();
-    lockerIsolatePort.send(lockRequest);
+    _lockerIsolatePort.send(lockRequest);
     var realLockResponse = await lockResponseFuture;
     // Maybe use the response sometime
   }
@@ -104,6 +104,15 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
   bool killRequested = false;
   int openPortCount = 0;
 
+  void tryKillMe() {
+    if (openPortCount == 0 && killRequested) {
+      _KillRequest killRequest = _KillRequest();
+      killRequest.action = true;
+      mainSendPort.send(killRequest);
+      receivePort.close();
+    }
+  }
+
   bool proccessLockRequests(_LockRequest request) {
     var response = _LockResponse();
 
@@ -132,6 +141,8 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
   }
 
   receivePort.listen((dynamic message) {
+    if (killRequested) return;
+
     if (message is _SendPortRequest) {
       _SendPortRequest request = message;
 
@@ -155,9 +166,7 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
               openPortCount--;
             }
 
-            if (openPortCount == 0 && killRequested) {
-              receivePort.close();
-            }
+            tryKillMe();
           }
         });
 
@@ -170,9 +179,7 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
       if (killRequest.action == true) {
         killRequested = true;
 
-        if (openPortCount == 0) {
-          receivePort.close();
-        }
+        tryKillMe();
       }
     }
   });
@@ -185,7 +192,8 @@ class IsolateLocker {
   final _lockReceivePort = ReceivePort();
   final _lockerSenderPortCompleter = Completer();
   var _newLockerCompleter = Completer();
-  Mutex m = Mutex();
+  bool _dead = false;
+  Mutex _m = Mutex();
 
   /// Create a new IsolateLocker to lock something globally
   IsolateLocker() {
@@ -199,9 +207,12 @@ class IsolateLocker {
             _lockerSenderPortCompleter.complete();
           } else {
             Locker newLocker = Locker();
-            newLocker.lockerIsolatePort = message;
+            newLocker._lockerIsolatePort = message;
             _newLockerCompleter.complete(newLocker);
           }
+        } else if (message is _KillRequest) {
+          _KillRequest killRequest = message;
+          if (killRequest.action == true) _lockReceivePort.close();
         }
       }
     }
@@ -213,7 +224,9 @@ class IsolateLocker {
   /// Get a new Locker to pass to a new Isolate which then can Lock the
   /// IsolateLocker once it needs a specific resource.
   Future<Locker> requestNewLocker() async {
-    await m.acquire();
+    if (_dead) return null;
+
+    await _m.acquire();
 
     await _lockerSenderPortCompleter.future;
 
@@ -222,7 +235,7 @@ class IsolateLocker {
     _lockerSendPort.send(_sendPortRequest);
     Locker newLocker = await _newLockerCompleter.future;
 
-    m.release();
+    _m.release();
 
     return newLocker;
   }
@@ -234,6 +247,6 @@ class IsolateLocker {
     _KillRequest _killRequest = _KillRequest();
     _killRequest.action = true;
     _lockerSendPort.send(_killRequest);
-    _lockReceivePort.close();
+    _dead = true;
   }
 }
