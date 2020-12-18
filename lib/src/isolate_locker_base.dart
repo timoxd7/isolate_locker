@@ -15,16 +15,23 @@ class Locker {
   /// other, using a Mutex from the mutex package is the best way.
   Mutex m = Mutex();
 
+  /// Awaiting this Future, you can Lock the specific IsolateLocker to
+  /// exclusively use it. Use just with "await" to wait for the lock to be
+  /// accepted
   Future<void> request() async {
     await m.acquire();
     await _lockWithState(true);
   }
 
+  /// Release a once given lock. request() has to be called first!
   void release() async {
     await _lockWithState(false);
     m.release();
   }
 
+  /// To prevent misusage by forgetting release, you can just encapsulate a
+  /// Function in the protect function. The function then gets only called,
+  /// once a Lock has been accepted. Use only this whenever possible!
   Future<void> protect(Function criticalSection) async {
     await request();
 
@@ -37,7 +44,7 @@ class Locker {
 
   /// Only if the Isolate should be terminated! This will render this Locker
   /// permanently useless. Only use if all sync and async code which could
-  /// use this Locker is fully completed
+  /// use this Locker is fully completed!
   void kill() {
     _SendPortRequest message = _SendPortRequest();
     message.action = false;
@@ -180,6 +187,7 @@ class IsolateLocker {
   var _newLockerCompleter = Completer();
   Mutex m = Mutex();
 
+  /// Create a new IsolateLocker to lock something globally
   IsolateLocker() {
     void _isolateListener() async {
       await for (dynamic message in _lockReceivePort) {
@@ -202,6 +210,8 @@ class IsolateLocker {
     Isolate.spawn(_lockerIsolateFunc, _lockReceivePort.sendPort);
   }
 
+  /// Get a new Locker to pass to a new Isolate which then can Lock the
+  /// IsolateLocker once it needs a specific resource.
   Future<Locker> requestNewLocker() async {
     await m.acquire();
 
@@ -217,6 +227,9 @@ class IsolateLocker {
     return newLocker;
   }
 
+  /// Kill the IsolateLocker. This only gives a Signal to the Isolate Locker.
+  /// The Kill will only be executed if all Locks also have been killed.
+  /// This will Render this IsolateLocker useless!
   void kill() {
     _KillRequest _killRequest = _KillRequest();
     _killRequest.action = true;
