@@ -35,6 +35,15 @@ class Locker {
     }
   }
 
+  /// Only if the Isolate should be terminated! This will render this Locker
+  /// permanently useless. Only use if all sync and async code which could
+  /// use this Locker is fully completed
+  void kill() {
+    _SendPortRequest message = _SendPortRequest();
+    message.action = false;
+    lockerIsolatePort.send(message);
+  }
+
   Future<void> _lockWithState(bool newLockState) async {
     var lockRequest = _LockRequest();
     var newReceivePort = ReceivePort();
@@ -72,17 +81,21 @@ class _LockResponse {
 }
 
 class _SendPortRequest {
-  _SendPortRequest(int amount) {
-    this.amount = amount;
-  }
+  bool action =
+      true; // true == get new SendPort, false == kill this ReceivePort
+}
 
-  int amount;
+class _KillRequest {
+  bool action = true; // true == kill
 }
 
 void _lockerIsolateFunc(SendPort mainSendPort) {
   ReceivePort receivePort = ReceivePort();
   bool locked = false;
   var pendingLocks = List<_LockRequest>();
+
+  bool killRequested = false;
+  int openPortCount = 0;
 
   bool proccessLockRequests(_LockRequest request) {
     var response = _LockResponse();
@@ -115,7 +128,7 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
     if (message is _SendPortRequest) {
       _SendPortRequest request = message;
 
-      for (int i = 0; i < request.amount; i++) {
+      if (request.action == true) {
         var newReceivePort = ReceivePort();
 
         newReceivePort.listen((message) {
@@ -127,10 +140,32 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
               proccessLockRequests(pendingLocks.first);
               pendingLocks.removeAt(0);
             }
+          } else if (message is _SendPortRequest) {
+            _SendPortRequest request = message;
+
+            if (request.action == false) {
+              newReceivePort.close();
+              openPortCount--;
+            }
+
+            if (openPortCount == 0 && killRequested) {
+              receivePort.close();
+            }
           }
         });
 
         mainSendPort.send(newReceivePort.sendPort);
+        openPortCount++;
+      }
+    } else if (message is _KillRequest) {
+      _KillRequest killRequest = message;
+
+      if (killRequest.action == true) {
+        killRequested = true;
+
+        if (openPortCount == 0) {
+          receivePort.close();
+        }
       }
     }
   });
@@ -140,18 +175,14 @@ void _lockerIsolateFunc(SendPort mainSendPort) {
 
 class IsolateLocker {
   SendPort _lockerSendPort;
-  var _lockerSenderPortCompleter = Completer();
+  final _lockReceivePort = ReceivePort();
+  final _lockerSenderPortCompleter = Completer();
   var _newLockerCompleter = Completer();
   Mutex m = Mutex();
 
-  /**
-   * newLockerReady = Callback if a new Locker for a worker Isolate is ready
-   */
   IsolateLocker() {
-    var lockReceivePort = ReceivePort();
-
     void _isolateListener() async {
-      await for (dynamic message in lockReceivePort) {
+      await for (dynamic message in _lockReceivePort) {
         if (message is SendPort) {
           if (_lockerSendPort == null) {
             // Use first sendPort for the communication with main
@@ -168,20 +199,28 @@ class IsolateLocker {
     }
 
     _isolateListener();
-    Isolate.spawn(_lockerIsolateFunc, lockReceivePort.sendPort);
+    Isolate.spawn(_lockerIsolateFunc, _lockReceivePort.sendPort);
   }
 
   Future<Locker> requestNewLocker() async {
-    m.acquire();
+    await m.acquire();
 
     await _lockerSenderPortCompleter.future;
 
     _newLockerCompleter = Completer();
-    _lockerSendPort.send(_SendPortRequest(1));
+    var _sendPortRequest = _SendPortRequest();
+    _lockerSendPort.send(_sendPortRequest);
     Locker newLocker = await _newLockerCompleter.future;
 
     m.release();
 
     return newLocker;
+  }
+
+  void kill() {
+    _KillRequest _killRequest = _KillRequest();
+    _killRequest.action = true;
+    _lockerSendPort.send(_killRequest);
+    _lockReceivePort.close();
   }
 }

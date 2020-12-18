@@ -17,17 +17,45 @@ class WorkerConfig {
 
 void main() async {
   isolateLocker = IsolateLocker();
+  int workerCount = 0;
+  bool done = false;
+
+  void checkLife() {
+    if (workerCount == 0 && done) isolateLocker.kill();
+  }
+
+  void workerRemovedListener(ReceivePort receiverPort) async {
+    await for (dynamic message in receiverPort) {
+      // -> ended
+      workerCount--;
+      checkLife();
+      receiverPort.close();
+    }
+  }
 
   for (var i = 0; i < workerAmount; i++) {
+    ReceivePort currentReceivePort = ReceivePort();
     Locker newLocker = await isolateLocker.requestNewLocker();
+
     print("C Creating Worker " + i.toString());
-    Isolate.spawn(workerIsolateFunc, WorkerConfig(newLocker, i));
+
+    workerRemovedListener(currentReceivePort);
+
+    Future<Isolate> newIsolate = Isolate.spawn(
+        workerIsolateFunc, WorkerConfig(newLocker, i),
+        onExit: currentReceivePort.sendPort);
+
+    workerCount++;
   }
+
+  done = true;
+  checkLife();
 }
 
 void workerIsolateFunc(WorkerConfig conf) async {
-  workerRoutine(1, conf);
-  workerRoutine(2, conf);
+  await workerRoutine(1, conf);
+  await workerRoutine(2, conf);
+  conf.locker.kill();
 }
 
 void workerRoutine(int count, WorkerConfig conf) async {
